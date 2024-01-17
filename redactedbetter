@@ -1,19 +1,19 @@
 #!/usr/bin/env python
-import ConfigParser
+import configparser
 import argparse
-import cPickle as pickle
+import pickle
 import os
 import shutil
 import sys
 import tempfile
-import urlparse
+import urllib.parse
 from multiprocessing import cpu_count
-
+import platform
 import tagging
 import transcode
 import redactedapi
 from _version import __version__
-
+import html
 
 def create_description(torrent, flac_dir, format, permalink):
     # Create an example command to document the transcode process.
@@ -69,12 +69,14 @@ def main():
     parser.add_argument('--cache', help='the location of the cache', \
             default=os.path.expanduser('~/.redactedbetter/cache'))
     parser.add_argument('-U', '--no-upload', action='store_true', help='don\'t upload new torrents (in case you want to do it manually)')
-    parser.add_argument('-E', '--no-24bit-edit', action='store_true', help='don\'t try to edit 24-bit torrents mistakenly labeled as 16-bit')
+    parser.add_argument('-Y', '--no-prompt', action='store_true', help='don\'t prompt user on every torrent')
+    #parser.add_argument('-E', '--no-24bit-edit', action='store_true', help='don\'t try to edit 24-bit torrents mistakenly labeled as 16-bit')
     parser.add_argument('--version', action='version', version='%(prog)s ' + __version__)
+    prompt_user = True
 
     args = parser.parse_args()
 
-    config = ConfigParser.RawConfigParser()
+    config = configparser.RawConfigParser()
     try:
         open(args.config)
         config.read(args.config)
@@ -82,31 +84,30 @@ def main():
         if not os.path.exists(os.path.dirname(args.config)):
             os.makedirs(os.path.dirname(args.config))
         config.add_section('redacted')
-        config.set('redacted', 'username', '')
-        config.set('redacted', 'password', '')
-        config.set('redacted', 'session_cookie', '')
+        config.set('redacted', 'api_key', '')
         config.set('redacted', 'data_dir', '')
         config.set('redacted', 'output_dir', '')
         config.set('redacted', 'torrent_dir', '')
         config.set('redacted', 'formats', 'flac, v0, 320')
         config.set('redacted', 'media', ', '.join(redactedapi.lossless_media))
-        config.set('redacted', '24bit_behaviour','0')
+        #config.set('redacted', '24bit_behaviour','0')
         config.set('redacted', 'piece_length', '18')
         config.write(open(args.config, 'w'))
-        print 'Please edit the configuration file: %s' % args.config
+        print(f'Please edit the configuration file: {args.config}')
+
         sys.exit(2)
     finally:
-        username = config.get('redacted', 'username')
-        password = config.get('redacted', 'password')
+        api_key = config.get('redacted', 'api_key')
+        #password = config.get('redacted', 'password')
         try:
             session_cookie = os.path.expanduser(config.get('redacted', 'session_cookie'))
-        except ConfigParser.NoOptionError:
+        except configparser.NoOptionError:
             session_cookie = None
         do_24_bit = config.get('redacted', '24bit_behaviour')
         data_dir = os.path.expanduser(config.get('redacted', 'data_dir'))
         try:
             output_dir = os.path.expanduser(config.get('redacted', 'output_dir'))
-        except ConfigParser.NoOptionError:
+        except configparser.NoOptionError:
             output_dir = None
         if not output_dir:
             output_dir = data_dir
@@ -120,16 +121,16 @@ def main():
             else:
                 supported_media = set([medium.strip().lower() for medium in media_config.split(',')])
                 if not supported_media.issubset(set(redactedapi.lossless_media)):
-                    print 'Unsupported media type "%s", edit your configuration' % (supported_media - redactedapi.lossless_media).pop()
-                    print 'Supported types are:', ', '.join(redactedapi.lossless_media)
+                    print(f'Unsupported media type "{(supported_media - redactedapi.lossless_media).pop()}", edit your configuration')
+                    print(f'Supported types are: {", ".join(redactedapi.lossless_media)}')
                     sys.exit(2)
-        except ConfigParser.NoOptionError:
+        except configparser.NoOptionError:
             supported_media = redactedapi.lossless_media
 
     upload_torrent = not args.no_upload
-
-    print 'Logging in to RED...'
-    api = redactedapi.RedactedAPI(username, password, session_cookie)
+    prompt_user = not args.no_prompt
+    print ('Logging in to RED...')
+    api = redactedapi.RedactedAPI(api_key)
 
     try:
         seen = pickle.load(open(args.cache))
@@ -137,21 +138,21 @@ def main():
         seen = set()
         pickle.dump(seen, open(args.cache, 'wb'))
 
-    print 'Searching for transcode candidates...'
+    print ('Searching for transcode candidates...')
     if args.release_urls:
-        print 'You supplied one or more release URLs, ignoring your configuration\'s media types.'
+        print ('You supplied one or more release URLs, ignoring your configuration\'s media types.')
         candidates = [(int(query['id']), int(query['torrentid'])) for query in\
-                [dict(urlparse.parse_qsl(urlparse.urlparse(url).query)) for url in args.release_urls]]
+                [dict(urllib.parse.parse_qsl(urllib.parse.urlparse(url).query)) for url in args.release_urls]]
     else:
         candidates = api.snatched(skip=seen, media=supported_media)
 
     for groupid, torrentid in candidates:
-        group = api.request('torrentgroup', id=groupid)
+        group = api.request_get('torrentgroup', id=groupid)
         if group != None:
             torrent = [t for t in group['torrents'] if t['id'] == torrentid][0]
 
             artist = "";
-            name = redactedapi.unescape(group['group']['name'])
+            name = html.unescape(group['group']['name'])
             if len(group['group']['musicInfo']['artists']) > 1:
                 artist = "Various Artists"
             else:
@@ -166,13 +167,16 @@ def main():
             releaseyear   = "Release year     : %s" % year
             releaseurl    = "Release URL      : %s" % api.release_url(group, torrent)
 
+            # Concatenate as strings
+            combined_str = releaseartist + "\n" + releasename + "\n" + releaseyear + "\n" + releaseurl
+
             print("\n\n")
-            print(border_msg(releaseartist.encode("utf-8") + "\n" + releasename.encode("utf-8") + "\n" + releaseyear.encode("utf-8") + "\n" + releaseurl.encode("utf-8")))
+            print(border_msg(combined_str.encode("utf-8")))
 
             if not torrent['filePath']:
-                flac_file = os.path.join(data_dir, redactedapi.unescape(torrent['fileList']).split('{{{')[0])
+                flac_file = os.path.join(data_dir, html.unescape(torrent['fileList']).split('{{{')[0])
                 if not os.path.exists(flac_file):
-                    print "Path not found - skipping: %s" % flac_file
+                    print(f"Path not found - skipping: {flac_file}")
                     continue
                 flac_dir = os.path.join(data_dir, "%s (%s) [FLAC]" % (
                 name, group['group']['year']))
@@ -180,37 +184,36 @@ def main():
                     os.makedirs(flac_dir)
                 shutil.copy(flac_file, flac_dir)
             else:
-                flac_dir = os.path.join(data_dir, redactedapi.unescape(torrent['filePath']))
+                flac_dir = os.path.join(data_dir, html.unescape(torrent['filePath']))
 
-            flac_dir = flac_dir.encode(sys.getfilesystemencoding())
-            if int(do_24_bit):
-                try:
-                    if transcode.is_24bit(flac_dir) and torrent['encoding'] != '24bit Lossless':
-                        # A lot of people are uploading FLACs from Bandcamp without realizing
-                        # that they're actually 24 bit files (usually 24/44.1). Since we know for
-                        # sure whether the files are 24 bit, we might as well correct the listing
-                        # on the site (and get an extra upload in the process).
-                        if args.no_24bit_edit:
-                            print "Release is actually 24-bit lossless, skipping."
-                            continue
-                        if int(do_24_bit) == 1:
-                            confirmation = raw_input("Mark release as 24bit lossless? y/n: ")
-                            if confirmation != 'y':
-                                continue
-                        print "Marking release as 24bit lossless."
-                      #  api.set_24bit(torrent)
-                        group = api.request('torrentgroup', id=groupid)
-                        torrent = [t for t in group['torrents'] if t['id'] == torrentid][0]
-                except Exception as e:
-                    print "Error: can't edit 24-bit torrent - skipping: %s" % e
-                    continue
+            # if int(do_24_bit):
+            #     try:
+            #         if transcode.is_24bit(flac_dir) and torrent['encoding'] != '24bit Lossless':
+            #             # A lot of people are uploading FLACs from Bandcamp without realizing
+            #             # that they're actually 24 bit files (usually 24/44.1). Since we know for
+            #             # sure whether the files are 24 bit, we might as well correct the listing
+            #             # on the site (and get an extra upload in the process).
+            #             if args.no_24bit_edit:
+            #                 print ("Release is actually 24-bit lossless, skipping.")
+            #                 continue
+            #             if int(do_24_bit) == 1:
+            #                 confirmation = input("Mark release as 24bit lossless? y/n: ")
+            #                 if confirmation != 'y':
+            #                     continue
+            #             print ("Marking release as 24bit lossless.")
+            #           #  api.set_24bit(torrent)
+            #             group = api.request_get('torrentgroup', id=groupid)
+            #             torrent = [t for t in group['torrents'] if t['id'] == torrentid][0]
+            #     except Exception as e:
+            #         print(f"Error: can't edit 24-bit torrent - skipping: {e}")
+            #         continue
 
             if transcode.is_multichannel(flac_dir):
-                print "This is a multichannel release, which is unsupported - skipping"
+                print ("This is a multichannel release, which is unsupported - skipping")
                 continue
 
             needed = formats_needed(group, torrent, supported_formats)
-            print "Formats needed: %s" % ', '.join(needed)
+            print(f"Formats needed: {', '.join(needed)}")
 
             if needed:
                 # Before proceeding, do the basic tag checks on the source
@@ -221,28 +224,28 @@ def main():
                 for flac_file in transcode.locate(flac_dir, transcode.ext_matcher('.flac')):
                     (ok, msg) = tagging.check_tags(flac_file, check_tracknumber_format=False)
                     if not ok:
-                        print "A FLAC file in this release has unacceptable tags - skipping: %s" % msg
-                        print "You might be able to trump it."
+                        print (f"A FLAC file in this release has unacceptable tags - skipping: {msg}")
+                        print ("You might be able to trump it.")
                         broken_tags = True
                         break
                 if broken_tags:
                     continue
 
             while os.path.exists(flac_dir) == False:
-                print "Path not found: %s" % flac_dir
+                print (f"Path not found: {flac_dir}")
                 alternative_file_path_exists = ""
                 while (alternative_file_path_exists.lower() != "y") and (alternative_file_path_exists.lower() != "n"):
-                    alternative_file_path_exists = raw_input("Do you wish to provide an alternative file path? (y/n): ")
+                    alternative_file_path_exists = input("Do you wish to provide an alternative file path? (y/n): ")
 
                 if alternative_file_path_exists.lower() == "y":
-                    flac_dir = raw_input("Alternative file path: ")
+                    flac_dir = input("Alternative file path: ")
                 else:
-                    print "Skipping: %s" % flac_dir
+                    print (f"Skipping: {flac_dir}")
                     break
 
-            for format in needed:
+            for bitrate in needed:
                 if os.path.exists(flac_dir):
-                    print 'Adding format %s...' % format,
+                    print (f'Adding format MP3 Bitrate {bitrate}')
                     tmpdir = tempfile.mkdtemp()
                     try:
                         if len(torrent['remasterTitle']) >= 1:
@@ -250,23 +253,25 @@ def main():
                         else:
                             basename = artist + " - " + name + " [" + year + "] (" + torrent['media'] + " - "
 
-                        transcode_dir = transcode.transcode_release(flac_dir, output_dir, basename, format, max_threads=args.threads)
+                        transcode_dir = transcode.transcode_release(flac_dir, output_dir, basename, bitrate, max_threads=args.threads)
                         if transcode_dir == False:
-                            print "Skipping - some file(s) in this release were incorrectly marked as 24bit."
+                            print ("Skipping - some file(s) in this release were incorrectly marked as 24bit.")
                             break
 
                         new_torrent = transcode.make_torrent(transcode_dir, tmpdir, api.tracker, api.passkey, config.get('redacted', 'piece_length'))
 
                         if upload_torrent:
                             permalink = api.permalink(torrent)
-                            description = create_description(torrent, flac_dir, format, permalink)
-                            api.upload(group, torrent, new_torrent, format, description)
+                            description = create_description(torrent, flac_dir, bitrate, permalink)
+                            api.upload(group, torrent, new_torrent, bitrate, description, prompt_user)
 
+                        if not os.path.exists(torrent_dir):
+                            os.makedirs(torrent_dir)
                         shutil.copy(new_torrent, torrent_dir)
-                        print "done!"
+                        print ("done!")
                         if args.single: break
                     except Exception as e:
-                        print "Error adding format %s: %s" % (format, e)
+                        print (f"Error adding format {bitrate}: {e}")
                     finally:
                         shutil.rmtree(tmpdir)
 

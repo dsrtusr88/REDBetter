@@ -29,7 +29,7 @@ setup(
     scripts = ['redactedbetter'],
     install_requires = [
         'mutagen>=1.20',
-        'mechanize==0.2.5',
+        'mechanize==04.9',
         'requests>=1.0'
     ]
 )

@@ -9,9 +9,9 @@ REDBetter is a script which searches your torrent download directory for any FLA
 
 ## Dependencies
 
-* Python 2.7 or newer
+* Python 3.6 or newer
 * `mktorrent`
-* `mechanize`, `mutagen`, `requests` and `Unidecode` Python modules
+* `mutagen`, `requests` Python modules
 * `lame`, `sox` and `flac`
 
 
@@ -34,7 +34,7 @@ $> make && sudo make install
 
 If you are on a seedbox and you lack the privileges to install packages, you are best off contacting your seedbox provider and asking them to install the listed packages.
 
-#### 3. Install `mechanize`, `mutagen`, `requests` and `Unidecode` Python modules
+#### 3. Install`mutagen`, `requests` Python modules
 
 Depending on your user privileges you may need to use sudo, as shown below
 
@@ -92,8 +92,7 @@ optional arguments:
                         /home/taylor/.redactedbetter/cache)
   -U, --no-upload       don't upload new torrents (in case you want to do it
                         manually) (default: False)
-  -E, --no-24bit-edit   don't try to edit 24-bit torrents mistakenly labeled
-                        as 16-bit (default: False)
+  -Y, --no-prompt       don't prompt user on every torrent (default: False)
   --version             show program's version number and exit
 ~~~~
 

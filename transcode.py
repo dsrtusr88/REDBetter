@@ -9,7 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
-
+import platform
 import mutagen.flac
 
 import tagging
@@ -39,34 +39,40 @@ class UnknownSampleRateException(TranscodeException):
 # stderr) of every process in the pipeline, not just the last one. The
 # results are returned as a list of (code, stderr) pairs, one pair per
 # process.
+
 def run_pipeline(cmds):
-    # The Python executable (and its children) ignore SIGPIPE. (See
-    # http://bugs.python.org/issue1652) Our subprocesses need to see
-    # it.
-    sigpipe_handler = signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    if hasattr(signal, 'SIGPIPE'):
+        sigpipe_handler = signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+    
     stdin = None
     last_proc = None
     procs = []
+
     try:
         for cmd in cmds:
-            proc = subprocess.Popen(shlex.split(cmd), stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if last_proc:
-                # Ensure last_proc receives SIGPIPE if proc exits first
-                last_proc.stdout.close()
-            procs.append(proc)
-            stdin = proc.stdout
-            last_proc = proc
+            #print(f"Running command: {cmd}")  # Debug output for command
+            try:
+                proc = subprocess.Popen(shlex.split(cmd), stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if last_proc:
+                    last_proc.stdout.close()
+                procs.append(proc)
+                stdin = proc.stdout
+                last_proc = proc
+            except Exception as e:
+                print(f"Error running command '{cmd}': {e}")  # Debug output for errors
+
     finally:
-        signal.signal(signal.SIGPIPE, sigpipe_handler)
+        if hasattr(signal, 'SIGPIPE'):
+            signal.signal(signal.SIGPIPE, sigpipe_handler)
 
     last_stderr = last_proc.communicate()[1]
 
     results = []
     for (cmd, proc) in zip(cmds[:-1], procs[:-1]):
-        # wait() is OK here, despite use of PIPE above; these procs
-        # are finished.
         proc.wait()
-        results.append((proc.returncode, proc.stderr.read()))
+        stderr_output = proc.stderr.read()
+        #print(f"Command '{cmd}' finished with return code {proc.returncode}. Stderr: {stderr_output}")  # Debug output for results
+        results.append((proc.returncode, stderr_output))
     results.append((last_proc.returncode, last_stderr))
     return results
 
@@ -156,12 +162,14 @@ def transcode_commands(output_format, resample, needed_sample_rate, flac_file, t
     if output_format == 'FLAC' and resample:
         commands = ['sox %(FLAC)s -G -b 16 %(FILE)s rate -v -L %(SAMPLERATE)s dither' % transcode_args]
     else:
-        commands = map(lambda cmd: cmd % transcode_args, transcoding_steps)
+        commands = list(map(lambda cmd: cmd % transcode_args, transcoding_steps))
     return commands
 
 # Pool.map() can't pickle lambdas, so we need a helper function.
-def pool_transcode((flac_file, output_dir, output_format)):
+def pool_transcode(args):
+    flac_file, output_dir, output_format = args
     return transcode(flac_file, output_dir, output_format)
+
 
 def transcode(flac_file, output_dir, output_format):
     '''
@@ -207,6 +215,9 @@ def transcode(flac_file, output_dir, output_format):
     commands = transcode_commands(output_format, resample, needed_sample_rate, flac_file, transcode_file)
     results = run_pipeline(commands)
 
+    # Define a variable for SIGPIPE, set it only if available
+    SIGPIPE = getattr(signal, 'SIGPIPE', None)
+
     # Check for problems. Because it's a pipeline, the earliest one is
     # usually the source. The exception is -SIGPIPE, which is caused
     # by "backpressure" due to a later command failing: ignore those
@@ -214,7 +225,7 @@ def transcode(flac_file, output_dir, output_format):
     last_sigpipe = None
     for (cmd, (code, stderr)) in zip(commands, results):
         if code:
-            if code == -signal.SIGPIPE:
+            if SIGPIPE is not None and code == -signal.SIGPIPE:
                 last_sigpipe = (cmd, (code, stderr))
             else:
                 raise TranscodeException('Transcode of file "%s" failed: %s' % (flac_file, stderr))
@@ -229,21 +240,32 @@ def transcode(flac_file, output_dir, output_format):
 
     return transcode_file
 
+import os
+
 def path_length_exceeds_limit(flac_dir, basename):
-    path_length = 0;
     flac_files = locate(flac_dir, ext_matcher('.flac'))
 
-    source_directory_name = flac_dir[flac_dir.rfind('/') + 1:-1]
+    # Use os.path.basename to get the name of the source directory
+    source_directory_name = os.path.basename(flac_dir)
 
     for root, dirs, files in os.walk(flac_dir):
         for name in files:
-            if len(basename + root[root.rfind(source_directory_name) + len(source_directory_name) + 1:-1] + "/" + name) > 180:
-                    return True
+            # Construct the path using os.path.join and check its length
+            full_path = os.path.join(root, name)
+            relative_path = os.path.relpath(full_path, start=flac_dir)
+            combined_path = os.path.join(basename, relative_path)
+            if len(combined_path) > 180:
+                return True
 
     return False
 
+
 def get_suitable_basename(basename):
-	return basename.replace('\0', '').replace('\\', ',').replace('/', '').replace(':', ',').replace('*', '').replace('?', '').replace('"', '').replace('<', '').replace('>', '').replace('|', '').encode("utf-8")
+	return basename.replace('\0', '').replace('\\', ',').replace('/', '').replace(':', ',').replace('*', '').replace('?', '').replace('"', '').replace('<', '').replace('>', '').replace('|', '')
+
+
+
+
 
 def get_transcode_dir(flac_dir, output_dir, basename, output_format, resample):
     if output_format == "FLAC":
@@ -257,11 +279,25 @@ def get_transcode_dir(flac_dir, output_dir, basename, output_format, resample):
     basename = get_suitable_basename(basename)
     
     while path_length_exceeds_limit(flac_dir, basename):
-        basename = get_suitable_basename(raw_input("The file paths in this torrent exceed the 180 character limit. \n\
-            The current directory name is: " + get_suitable_basename(basename.decode('utf-8')) + " \n\
-            Please enter a shorter directory name: ").decode('utf-8'))
+        basename = get_suitable_basename(input("The file paths in this torrent exceed the 180 character limit. \n\
+            The current directory name is: " + get_suitable_basename(basename) + " \n\
+            Please enter a shorter directory name: "))
 
     return os.path.join(output_dir, basename)
+
+# Check if the operating system is Unix-based
+is_unix = os.name != 'nt'
+
+# Define pool_initializer based on the operating system
+def pool_initializer():
+    if is_unix:
+        os.setsid()
+        def sigterm_handler(signum, frame):
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
+            pgid = os.getpgid(0)
+            os.killpg(pgid, signal.SIGTERM)
+            sys.exit(-signal.SIGTERM)
+        signal.signal(signal.SIGTERM, sigterm_handler)
 
 def transcode_release(flac_dir, output_dir, basename, output_format, max_threads=None):
     '''
@@ -290,22 +326,6 @@ def transcode_release(flac_dir, output_dir, basename, output_format, max_threads
         os.makedirs(transcode_dir)
     else:
         raise TranscodeException('transcode output directory "%s" already exists' % transcode_dir)
-
-    # To ensure that a terminated pool subprocess terminates its
-    # children, we make each pool subprocess a process group leader,
-    # and handle SIGTERM by killing the process group. This will
-    # ensure there are no lingering processes when a transcode fails
-    # or is interrupted.
-    def pool_initializer():
-        os.setsid()
-        def sigterm_handler(signum, frame):
-            # We're about to SIGTERM the group, including us; ignore
-            # it so we can finish this handler.
-            signal.signal(signal.SIGTERM, signal.SIG_IGN)
-            pgid = os.getpgid(0)
-            os.killpg(pgid, signal.SIGTERM)
-            sys.exit(-signal.SIGTERM)
-        signal.signal(signal.SIGTERM, sigterm_handler)
 
     try:
         # create transcoding threads
@@ -348,16 +368,36 @@ def transcode_release(flac_dir, output_dir, basename, output_format, max_threads
         shutil.rmtree(transcode_dir)
         raise
 
+def windows_to_cygwin_path(win_path):
+    if win_path[1:3] == ':\\':
+        return '/cygdrive/' + win_path[0].lower() + '/' + win_path[3:].replace('\\', '/')
+    return win_path
+
 def make_torrent(input_dir, output_dir, tracker, passkey, piece_length):
     torrent = os.path.join(output_dir, os.path.basename(input_dir)) + ".torrent"
     if not os.path.exists(os.path.dirname(torrent)):
-        os.path.makedirs(os.path.dirname(torrent))
+        os.makedirs(os.path.dirname(torrent))
     tracker_url = '%(tracker)s%(passkey)s/announce' % {
-        'tracker' : tracker,
-        'passkey' : passkey,
+        'tracker': tracker,
+        'passkey': passkey,
     }
-    command = ["mktorrent", "-s", "RED", "-p", "-a", tracker_url, "-o", torrent, "-l", piece_length, input_dir]
-    subprocess.check_output(command, stderr=subprocess.STDOUT)
+
+    # Check if the operating system is Windows since mktorrent only runs in cygwin there which mangles the paths
+    if platform.system() == 'Windows':
+        input_dir = windows_to_cygwin_path(input_dir)
+        mktorrentfile = windows_to_cygwin_path(torrent)
+    else:
+        mktorrentfile = torrent
+
+    command = ["mktorrent", "-s", "RED", "-p", "-a", tracker_url, "-o", mktorrentfile, "-l", piece_length, input_dir]
+
+    try:
+        subprocess.check_output(command, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as e:
+        print("Error executing command: ", " ".join(command))
+        print("Command output: ", e.output.decode())
+        raise
+
     return torrent
 
 def main():
