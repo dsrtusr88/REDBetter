@@ -216,6 +216,16 @@ def main():
                 print ("This is a scene torrent, cant recode without 'de-scening' it")
                 continue
             
+            if (torrent["remastered"] == False and torrent["remasterYear"] == 0):
+                print ("This is an unconfirmed release - skipping")
+                continue
+
+            if (torrent["remastered"] == True and torrent["remasterYear"] == 0):
+                print ("This is an unknown release - skipping")
+                continue
+
+
+
             if transcode.is_multichannel(flac_dir):
                 print ("This is a multichannel release, which is unsupported - skipping")
                 continue
