@@ -14,6 +14,7 @@ import transcode
 import redactedapi
 from _version import __version__
 import html
+import subprocess
 
 def create_description(torrent, flac_dir, format, permalink):
     # Create an example command to document the transcode process.
@@ -92,18 +93,21 @@ def main():
         config.set('redacted', 'media', ', '.join(redactedapi.lossless_media))
         #config.set('redacted', '24bit_behaviour','0')
         config.set('redacted', 'piece_length', '18')
+        config.set('redacted', 'sonocop_app_path', '')
         config.write(open(args.config, 'w'))
         print(f'Please edit the configuration file: {args.config}')
 
         sys.exit(2)
     finally:
         api_key = config.get('redacted', 'api_key')
+        sonocop_app_path =  config.get('redacted', 'sonocop_app_path')
         #password = config.get('redacted', 'password')
         try:
             session_cookie = os.path.expanduser(config.get('redacted', 'session_cookie'))
         except configparser.NoOptionError:
             session_cookie = None
-        do_24_bit = config.get('redacted', '24bit_behaviour')
+        #do_24_bit = config.get('redacted', '24bit_behaviour')
+
         data_dir = os.path.expanduser(config.get('redacted', 'data_dir'))
         try:
             output_dir = os.path.expanduser(config.get('redacted', 'output_dir'))
@@ -246,6 +250,46 @@ def main():
                 else:
                     print (f"Skipping: {flac_dir}")
                     break
+
+            if (torrent["lossyWebApproved"]):  # temporarily skip check for testing
+                print (f"Lossy Web Approved, skipping transcoded flac check")
+            else:
+                if (torrent["lossyMasterApproved"]):
+                    print (f"Lossy Master Approved, skipping transcoded flac check")
+                else:
+                    transcode_count = 0
+                    result=None
+                    if (os.path.exists(sonocop_app_path)):
+                        print (f"Checking if flac transcoded using sonocop")
+                        # Run the command with the specified argument
+                        result = subprocess.run([sonocop_app_path, flac_dir], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        transcode_count = result.returncode
+                    else:
+                        try:
+                            # Attempt to run through docker
+                            command = ["docker", "run", "--rm", "-v", f'"{flac_dir}:/data"', "nullpointerninja7/sonocop:latest"]
+                            print("Sonocop not configured. Try to run it's docker container instead")
+                            print("Running command:", " ".join(command))
+                            result = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                            transcode_count = result.returncode
+                        except (subprocess.CalledProcessError, FileNotFoundError):
+                            # CalledProcessError if the command ran but failed
+                            # FileNotFoundError if the command was not found
+                            print (f"--Sonocop not configured in config file and docker launch failed. Cannot check transcodes, exiting.--")   
+                            sys.exit(99)
+                        # Access the exit code
+                    
+
+                    # Optionally, print the standard output and standard error
+                    print(result.stdout)
+                    print(result.stderr)                    
+                    if (transcode_count > 100):
+                        print (f"***Possible system error *** Processing : {flac_dir}. Exiting.")
+                        sys.exit(transcode_count)
+                    if (transcode_count > 0):
+                        print (f"***{transcode_count} transcoded flacs found *** Skipping : {flac_dir}")
+                        print (f"***Manually review spectrograms and report this as a transcode if it is")
+                        continue
 
             for bitrate in needed:
                 if os.path.exists(flac_dir):

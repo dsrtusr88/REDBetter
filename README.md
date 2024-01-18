@@ -13,6 +13,7 @@ REDBetter is a script which searches your torrent download directory for any FLA
 * `mktorrent`
 * `mutagen`, `requests` Python modules
 * `lame`, `sox` and `flac`
+* sonocop V1.3 https://github.com/NullPointerNinja7/sonocop
 
 
 ## Installation Instructions
