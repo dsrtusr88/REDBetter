@@ -251,7 +251,7 @@ def main():
                     print (f"Skipping: {flac_dir}")
                     break
 
-            if (torrent["lossyWebApproved"]):  # temporarily skip check for testing
+            if (torrent["lossyWebApproved"]): 
                 print (f"Lossy Web Approved, skipping transcoded flac check")
             else:
                 if (torrent["lossyMasterApproved"]):
