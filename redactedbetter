@@ -224,7 +224,9 @@ def main():
                 print ("This is an unknown release - skipping")
                 continue
 
-
+            if (torrent["reported"] == True):
+                print ("This torrent was reported - skipping")
+                continue
 
             if transcode.is_multichannel(flac_dir):
                 print ("This is a multichannel release, which is unsupported - skipping")
