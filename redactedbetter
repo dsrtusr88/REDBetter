@@ -208,6 +208,10 @@ def main():
             #         print(f"Error: can't edit 24-bit torrent - skipping: {e}")
             #         continue
 
+            if (torrent["scene"] == True):
+                print ("This is a scene torrent, cant recode without 'de-scening' it")
+                continue
+            
             if transcode.is_multichannel(flac_dir):
                 print ("This is a multichannel release, which is unsupported - skipping")
                 continue
