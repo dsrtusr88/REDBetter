@@ -395,7 +395,7 @@ def make_torrent(input_dir, output_dir, tracker, passkey, piece_length):
         subprocess.check_output(command, stderr=subprocess.STDOUT)
     except subprocess.CalledProcessError as e:
         print("Error executing command: ", " ".join(command))
-        print("Command output: ", e.output.decode())
+        print("Command output: ", e.output)
         raise
 
     return torrent

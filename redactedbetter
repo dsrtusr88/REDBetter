@@ -175,7 +175,7 @@ def main():
             combined_str = releaseartist + "\n" + releasename + "\n" + releaseyear + "\n" + releaseurl
 
             print("\n\n")
-            print(border_msg(combined_str.encode("utf-8")))
+            print(border_msg(combined_str))
 
             if not torrent['filePath']:
                 flac_file = os.path.join(data_dir, html.unescape(torrent['fileList']).split('{{{')[0])
