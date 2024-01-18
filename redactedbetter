@@ -30,7 +30,7 @@ def create_description(torrent, flac_dir, format, permalink):
         '',
         '[code]%s[/code]' % ' | '.join(cmds),
         '',
-        'Created using [url=https://redacted.ch/forums.php?action=viewthread&threadid=35524]REDBetter (iw00t fork)[/url]'
+        'Created using [url=https://redacted.ch/forums.php?action=viewthread&threadid=35524]REDBetter (NullPointerNinja7 fork of iw00t fork)[/url]'
         ''
         ]
     return description
@@ -68,7 +68,7 @@ def main():
     parser.add_argument('--config', help='the location of the configuration file', \
             default=os.path.expanduser('~/.redactedbetter/config'))
     parser.add_argument('--cache', help='the location of the cache', \
-            default=os.path.expanduser('~/.redactedbetter/cache'))
+            default=os.path.normpath(os.path.expanduser('~/.redactedbetter/cache')))  # changed to make it cross platform compatible
     parser.add_argument('-U', '--no-upload', action='store_true', help='don\'t upload new torrents (in case you want to do it manually)')
     parser.add_argument('-Y', '--no-prompt', action='store_true', help='don\'t prompt user on every torrent')
     #parser.add_argument('-E', '--no-24bit-edit', action='store_true', help='don\'t try to edit 24-bit torrents mistakenly labeled as 16-bit')
@@ -123,7 +123,7 @@ def main():
             if not media_config:
                 supported_media = redactedapi.lossless_media
             else:
-                supported_media = set([medium.strip().lower() for medium in media_config.split(',')])
+                supported_media = set([medium.strip() for medium in media_config.split(',')])
                 if not supported_media.issubset(set(redactedapi.lossless_media)):
                     print(f'Unsupported media type "{(supported_media - redactedapi.lossless_media).pop()}", edit your configuration')
                     print(f'Supported types are: {", ".join(redactedapi.lossless_media)}')
@@ -137,11 +137,15 @@ def main():
     api = redactedapi.RedactedAPI(api_key)
 
     try:
-        seen = pickle.load(open(args.cache))
-    except:
+        seen = pickle.load(open(args.cache, 'rb'))
+    except FileNotFoundError:
         seen = set()
         pickle.dump(seen, open(args.cache, 'wb'))
-
+    except Exception as err:
+        print(f"Error loading cache {args.cache} : {err}")
+        print(f"Try removing cachefile if created with earlier version of redbetter")
+        raise err
+    
     print ('Searching for transcode candidates...')
     if args.release_urls:
         print ('You supplied one or more release URLs, ignoring your configuration\'s media types.')
@@ -235,7 +239,7 @@ def main():
             needed = formats_needed(group, torrent, supported_formats)
             print(f"Formats needed: {', '.join(needed)}")
 
-            if needed:
+            if (len(needed) >0):
                 # Before proceeding, do the basic tag checks on the source
                 # files to ensure any uploads won't be reported, but punt
                 # on the tracknumber formatting; problems with tracknumber
@@ -251,91 +255,91 @@ def main():
                 if broken_tags:
                     continue
 
-            while os.path.exists(flac_dir) == False:
-                print (f"Path not found: {flac_dir}")
-                alternative_file_path_exists = ""
-                while (alternative_file_path_exists.lower() != "y") and (alternative_file_path_exists.lower() != "n"):
-                    alternative_file_path_exists = input("Do you wish to provide an alternative file path? (y/n): ")
+                while os.path.exists(flac_dir) == False:
+                    print (f"Path not found: {flac_dir}")
+                    alternative_file_path_exists = ""
+                    while (alternative_file_path_exists.lower() != "y") and (alternative_file_path_exists.lower() != "n"):
+                        alternative_file_path_exists = input("Do you wish to provide an alternative file path? (y/n): ")
 
-                if alternative_file_path_exists.lower() == "y":
-                    flac_dir = input("Alternative file path: ")
-                else:
-                    print (f"Skipping: {flac_dir}")
-                    break
-
-            if (torrent["lossyWebApproved"]): 
-                print (f"Lossy Web Approved, skipping transcoded flac check")
-            else:
-                if (torrent["lossyMasterApproved"]):
-                    print (f"Lossy Master Approved, skipping transcoded flac check")
-                else:
-                    transcode_count = 0
-                    result=None
-                    if (os.path.exists(sonocop_app_path)):
-                        print (f"Checking if flac transcoded using sonocop")
-                        # Run the command with the specified argument
-                        result = subprocess.run([sonocop_app_path, flac_dir], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                        transcode_count = result.returncode
+                    if alternative_file_path_exists.lower() == "y":
+                        flac_dir = input("Alternative file path: ")
                     else:
-                        try:
-                            # Attempt to run through docker
-                            command = ["docker", "run", "--rm", "-v", f'"{flac_dir}:/data"', "nullpointerninja7/sonocop:latest"]
-                            print("Sonocop not configured. Try to run it's docker container instead")
-                            print("Running command:", " ".join(command))
-                            result = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        print (f"Skipping: {flac_dir}")
+                        break
+
+                if (torrent["lossyWebApproved"]): 
+                    print (f"Lossy Web Approved, skipping transcoded flac check")
+                else:
+                    if (torrent["lossyMasterApproved"]):
+                        print (f"Lossy Master Approved, skipping transcoded flac check")
+                    else:
+                        transcode_count = 0
+                        result=None
+                        if (os.path.exists(sonocop_app_path)):
+                            print (f"Checking if flac transcoded using sonocop")
+                            # Run the command with the specified argument
+                            result = subprocess.run([sonocop_app_path, flac_dir], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                             transcode_count = result.returncode
-                        except (subprocess.CalledProcessError, FileNotFoundError):
-                            # CalledProcessError if the command ran but failed
-                            # FileNotFoundError if the command was not found
-                            print (f"--Sonocop not configured in config file and docker launch failed. Cannot check transcodes, exiting.--")   
-                            sys.exit(99)
-                        # Access the exit code
-                    
-
-                    # Optionally, print the standard output and standard error
-                    print(result.stdout)
-                    print(result.stderr)                    
-                    if (transcode_count > 100):
-                        print (f"***Possible system error *** Processing : {flac_dir}. Exiting.")
-                        sys.exit(transcode_count)
-                    if (transcode_count > 0):
-                        print (f"***{transcode_count} transcoded flacs found *** Skipping : {flac_dir}")
-                        print (f"***Manually review spectrograms and report this as a transcode if it is")
-                        continue
-
-            for bitrate in needed:
-                if os.path.exists(flac_dir):
-                    print (f'Adding format MP3 Bitrate {bitrate}')
-                    tmpdir = tempfile.mkdtemp()
-                    try:
-                        if len(torrent['remasterTitle']) >= 1:
-                            basename = artist + " - " + name + " (" + torrent['remasterTitle'] + ") " + "[" + year + "] (" + torrent['media'] + " - "
                         else:
-                            basename = artist + " - " + name + " [" + year + "] (" + torrent['media'] + " - "
+                            try:
+                                # Attempt to run through docker
+                                command = ["docker", "run", "--rm", "-v", f'"{flac_dir}:/data"', "nullpointerninja7/sonocop:latest"]
+                                print("Sonocop not configured. Try to run it's docker container instead")
+                                print("Running command:", " ".join(command))
+                                result = subprocess.run(command, check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                transcode_count = result.returncode
+                            except (subprocess.CalledProcessError, FileNotFoundError):
+                                # CalledProcessError if the command ran but failed
+                                # FileNotFoundError if the command was not found
+                                print (f"--Sonocop not configured in config file and docker launch failed. Cannot check transcodes, exiting.--")   
+                                sys.exit(99)
+                            # Access the exit code
+                        
 
-                        transcode_dir = transcode.transcode_release(flac_dir, output_dir, basename, bitrate, max_threads=args.threads)
-                        if transcode_dir == False:
-                            print ("Skipping - some file(s) in this release were incorrectly marked as 24bit.")
-                            break
+                        # Optionally, print the standard output and standard error
+                        print(result.stdout)
+                        print(result.stderr)                    
+                        if (transcode_count > 100):
+                            print (f"***Possible system error *** Processing : {flac_dir}. Exiting.")
+                            sys.exit(transcode_count)
+                        if (transcode_count > 0):
+                            print (f"***{transcode_count} transcoded flacs found *** Skipping : {flac_dir}")
+                            print (f"***Manually review spectrograms and report this as a transcode if it is")
+                            continue
 
-                        new_torrent = transcode.make_torrent(transcode_dir, tmpdir, api.tracker, api.passkey, config.get('redacted', 'piece_length'))
+                for bitrate in needed:
+                    if os.path.exists(flac_dir):
+                        print (f'Adding format MP3 Bitrate {bitrate}')
+                        tmpdir = tempfile.mkdtemp()
+                        try:
+                            if len(torrent['remasterTitle']) >= 1:
+                                basename = artist + " - " + name + " (" + torrent['remasterTitle'] + ") " + "[" + year + "] (" + torrent['media'] + " - "
+                            else:
+                                basename = artist + " - " + name + " [" + year + "] (" + torrent['media'] + " - "
 
-                        if upload_torrent:
-                            permalink = api.permalink(torrent)
-                            description = create_description(torrent, flac_dir, bitrate, permalink)
-                            api.upload(group, torrent, new_torrent, bitrate, description, prompt_user)
+                            transcode_dir = transcode.transcode_release(flac_dir, output_dir, basename, bitrate, max_threads=args.threads)
+                            if transcode_dir == False:
+                                print ("Skipping - some file(s) in this release were incorrectly marked as 24bit.")
+                                break
 
-                        if not os.path.exists(torrent_dir):
-                            os.makedirs(torrent_dir)
-                        shutil.copy(new_torrent, torrent_dir)
-                        print ("done!")
-                        if args.single: break
-                    except Exception as e:
-                        print (f"Error adding format {bitrate}: {e}")
-                    finally:
-                        shutil.rmtree(tmpdir)
+                            new_torrent = transcode.make_torrent(transcode_dir, tmpdir, api.tracker, api.passkey, config.get('redacted', 'piece_length'))
 
-            seen.add(str(torrentid))
+                            if upload_torrent:
+                                permalink = api.permalink(torrent)
+                                description = create_description(torrent, flac_dir, bitrate, permalink)
+                                api.upload(group, torrent, new_torrent, bitrate, description, prompt_user)
+
+                            if not os.path.exists(torrent_dir):
+                                os.makedirs(torrent_dir)
+                            shutil.copy(new_torrent, torrent_dir)
+                            print ("done!")
+                            if args.single: break
+                        except Exception as e:
+                            print (f"Error adding format {bitrate}: {e}")
+                        finally:
+                            shutil.rmtree(tmpdir)
+
+            seen.add(torrentid)
             pickle.dump(seen, open(args.cache, 'wb'))
 
 if __name__ == "__main__":

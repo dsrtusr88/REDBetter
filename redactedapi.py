@@ -28,7 +28,8 @@ media_search_map = {
     'blu-ray': 'Blu-ray'
     }
 
-lossless_media = set(media_search_map.keys())
+#web page uses keys, api uses values?
+lossless_media = set(media_search_map.values())
 
 formats = {
     'FLAC': {
@@ -80,8 +81,9 @@ class RedactedAPI:
     def _login(self):
         data=self.request_get("index")
         self.passkey=data["passkey"]
+        self.userid=data["id"]
         if (self.passkey):
-            print("Retrieved passkey from server")
+            print("Retrieved passkey and user id from server")
         else:
             print("Failed to retrieve passkey from server")
             sys.exit(0)
@@ -175,28 +177,21 @@ class RedactedAPI:
         if not media.issubset(lossless_media):
             raise ValueError('Unsupported media type %s' % (media - lossless_media).pop())
 
-        # gazelle doesn't currently support multiple values per query
-        # parameter, so we have to search a media type at a time;
-        # unless it's all types, in which case we simply don't specify
-        # a 'media' parameter (defaults to all types).
-
-        if media == lossless_media:
-            media_params = ['']
-        else:
-            media_params = ['&media=%s' % media_search_map[m] for m in media]
-
-        url = 'https://redacted.ch/torrents.php?type=snatched&userid=%s&format=FLAC' % self.userid
-        for mp in media_params:
-            page = 1
-            done = False
-            pattern = re.compile('torrents.php\?id=(\d+)&amp;torrentid=(\d+)')
-            while not done:
-                content = self.session.get(url + mp + "&page=%s" % page).text
-                for groupid, torrentid in pattern.findall(content):
-                    if skip is None or torrentid not in skip:
-                        yield int(groupid), int(torrentid)
-                done = 'Next &gt;' not in content
-                page += 1
+        curoffset=0
+        lastrescount = -1
+        limitsize=500
+        while (lastrescount != 0):
+            res = self.request_get("user_torrents", id=self.userid,type="snatched", limit=limitsize,offset=curoffset)
+            if (res == None):
+                print('Unable to fetch user torrents, aborting')
+                sys.exit(345)
+            lastrescount= len(res["snatched"])
+            for snatch in res["snatched"]:
+                if skip is None or snatch["torrentId"] not in skip:
+                    torrent = self.request_get("torrent",id=snatch["torrentId"])
+                    if (torrent["torrent"]["media"] in media):
+                        yield snatch["groupId"], snatch["torrentId"]
+            curoffset += limitsize
 
     def prompt_user_confirmation(self, summary):
         print("\nSummary of the information to be uploaded:")
