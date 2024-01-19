@@ -60,13 +60,14 @@ def border_msg(msg):
     return "+{dash}+\n{msg}\n+{dash}+".format(dash=dash,msg=msg)
 
 def main():
+    default_config_dir = os.path.join(os.path.expanduser('~'), '.redactedbetter')
+    default_config_path = os.path.join(default_config_dir, 'config')
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter, prog='redactedbetter')
     parser.add_argument('release_urls', nargs='*', help='the URL where the release is located')
     parser.add_argument('-s', '--single', action='store_true', help='only add one format per release (useful for getting unique groups)')
     parser.add_argument('-j', '--threads', type=int, help='number of threads to use when transcoding',
             default=max(cpu_count() - 1, 1))
-    parser.add_argument('--config', help='the location of the configuration file', \
-            default=os.path.expanduser('~/.redactedbetter/config'))
+    parser.add_argument('--config', help='the location of the configuration file', default=default_config_path)    
     parser.add_argument('--cache', help='the location of the cache', \
             default=os.path.normpath(os.path.expanduser('~/.redactedbetter/cache')))  # changed to make it cross platform compatible
     parser.add_argument('-U', '--no-upload', action='store_true', help='don\'t upload new torrents (in case you want to do it manually)')
