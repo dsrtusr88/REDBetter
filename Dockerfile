@@ -1,4 +1,4 @@
-FROM ghcr.io/hotio/base:alpine
+FROM python:2-slim
 
 RUN set -x \
   && apt-get update \
